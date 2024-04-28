@@ -53,51 +53,58 @@ def get_pae(base_name, attempts = 3, verbose = False):
 
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"}
     pae = None
+    status_code = None
     for i in np.arange(attempts):
-        if i > 0:
-            time.sleep(5)
+        time.sleep(1)
         response = requests.get(pae_url, headers=headers)
-        if response.status_code == 200:
+        status_code = response.status_code
+        if status_code == 200:
             pae_data = json.loads(response.text)
             pae = np.array(pae_data[0]["predicted_aligned_error"])
+            break
+        elif status_code == 404:
+            print(f"\tPAE array for {base_name} could not be found ({response.status_code}); it will be ignored.")
             break
         else:
             print(f"\tHTTP Error: {response.status_code} (Attempt #{i+1})")
 
-    if pae is None:
-        raise Exception(f"\tFailed to load PAE JSON for {base_name}. HTTP status code from final attempt: {response.status_code}")
+    if status_code not in [200, 404]:
+        raise Exception(f"\tUnexpected HTTP status code from final attempt: {status_code}")
 
-    return pae, response.status_code
+    return pae, status_code
 
-def run_dssp(tar_path, dssp_executable="/usr/bin/dssp", verbose = False):
+def run_dssp(tar_path, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"),
+             retrieve_pae = True, pae_thres = 5, verbose = False):
+
     structure_count = get_structure_count(tar_path)
     dssp_results = {}
+    excluded_results = {}
 
     with trange(structure_count, desc = f"Running DSSP for structures in tar archivee...") as pbar:
         for i, (pdb_file, model, base_name) in enumerate(stream_structures(tar_path)):
             dssp = DSSP(model, pdb_file, dssp=dssp_executable)
-            pae = get_pae(base_name, verbose=verbose)
+            dssp_vals = list(dssp.property_dict.values())
+            dssp_codes = [val[2] for val in dssp_vals]
+            forbidden_dssp_mask = np.isin(dssp_codes, forbidden_codes)
+
+            high_confidence_forbidden = forbidden_dssp_mask
+            if retrieve_pae:
+                pae, status_code = get_pae(base_name, verbose=verbose)
+                if pae is not None:
+                    pae_mask = np.less_equal(pae, pae_thres)
+                    high_confidence_forbidden = np.logical_and(pae_mask, forbidden_dssp_mask)
+
+            excluded_results[base_name] = high_confidence_forbidden
+
             dssp_results[base_name] = (dssp, pae)
             os.unlink(pdb_file)  # Remove the temporary file after use
+
             pbar.update()
 
-    return dssp_results
-
-def get_excluded(tar_path, pae_thres = 5, forbidden_codes = ("H", "B", "E", "G", "I", "T"), verbose = False):
-    dssp_results = run_dssp(tar_path, verbose=verbose)
-    excluded_results = {}
-    for base_name, (dssp, pae) in dssp_results.items():
-        pae_mask = np.less_equal(pae, pae_thres)
-        dssp_vals = list(dssp.property_dict.values())
-        dssp_codes = [val[2] for val in dssp_vals]
-        forbidden_dssp_mask = np.isin(dssp_codes, forbidden_codes)
-        high_confidence_forbidden = np.logical_and(pae_mask, forbidden_dssp_mask)
-        excluded_results[base_name] = high_confidence_forbidden
-
-    return excluded_results
+    return dssp_results, excluded_results
 
 if __name__ == "__main__":
     tar_path = input("Enter the path to the tar archive of Alphafold structures:  ")
-    excluded_results = get_excluded(tar_path)
+    dssp_results, excluded_results = run_dssp(tar_path)
     with open("alphadssp_excluded_results.pkl", "wb") as file:
-        pickle.dump(excluded_results, file)
+        pickle.dump((dssp_results, excluded_results), file)
