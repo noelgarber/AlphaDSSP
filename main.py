@@ -7,6 +7,7 @@ import json
 import time
 import pickle
 import os
+import sys
 from tqdm import trange
 from Bio.PDB import PDBParser, DSSP
 
@@ -55,7 +56,6 @@ def get_pae(base_name, attempts = 3, verbose = False):
     pae = None
     status_code = None
     for i in np.arange(attempts):
-        time.sleep(1)
         response = requests.get(pae_url, headers=headers)
         status_code = response.status_code
         if status_code == 200:
@@ -63,7 +63,6 @@ def get_pae(base_name, attempts = 3, verbose = False):
             pae = np.array(pae_data[0]["predicted_aligned_error"])
             break
         elif status_code == 404:
-            print(f"\tPAE array for {base_name} could not be found ({response.status_code}); it will be ignored.")
             break
         else:
             print(f"\tHTTP Error: {response.status_code} (Attempt #{i+1})")
