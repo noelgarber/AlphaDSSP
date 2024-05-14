@@ -1,0 +1,1 @@
+from .alphadssp import generate_dssp

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="AlphaDSSP",
-    version="0.2",
+    version="0.3.2",
     packages=find_packages(),
     description="Tool for converting Alphafold tar shards to a database of DSSP secondary structure information.",
     long_description=open("README.md").read(),

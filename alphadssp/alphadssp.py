@@ -106,8 +106,11 @@ def run_dssp_parallel(tar_paths, dssp_executable="/usr/bin/dssp", forbidden_code
 
     return excluded_results
 
+current_file_path = __file__
+directory_path = os.path.dirname(os.path.abspath(current_file_path))
+alphadssp_path = os.path.join(directory_path, "alphadssp_excluded_results.pkl")
+
 def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
-    alphadssp_path = os.path.join(os.getcwd(), "../alphadssp_excluded_results.pkl")
     if os.path.exists(alphadssp_path):
         with open(alphadssp_path, "rb") as file:
             excluded_results = pickle.load(file)
