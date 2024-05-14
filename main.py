@@ -5,6 +5,8 @@ import tempfile
 import json
 import pickle
 import os
+from multiprocessing import Pool
+from functools import partial
 from tqdm import trange
 from Bio.PDB import MMCIFParser, DSSP
 
@@ -69,36 +71,55 @@ def stream_structures(tar_paths):
 
                     yield (temp_cif_file.name, model, base_name, confidence_vals)
 
-def run_dssp(tar_paths, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"),
-             plddt_thres = 70, verbose = False):
+def run_dssp(entry_tuple, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
+    # Function for single entry
+    cif_file, model, base_name, plddt_vals = entry_tuple
+    dssp = DSSP(model, cif_file, dssp=dssp_executable)
+    dssp_codes = [val[2] for val in list(dssp.property_dict.values())]
+    forbidden_dssp_mask = np.isin(dssp_codes, forbidden_codes)
+
+    # Only consider forbidden secondary structures if model confidence passes a given threshold
+    plddt_mask = np.greater_equal(plddt_vals, plddt_thres)
+    high_confidence_forbidden = np.logical_and(plddt_mask, forbidden_dssp_mask)
+    results = (high_confidence_forbidden, "".join(dssp_codes))
+    os.unlink(cif_file)  # Remove the temporary file after use
+
+    return (base_name, results)
+
+def run_dssp_parallel(tar_paths, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"),
+                      plddt_thres=70):
 
     print(f"Getting structure count...")
     structure_count = get_structure_count(tar_paths)
-    dssp_results = {}
     excluded_results = {}
 
+    processes = os.cpu_count() - 1
+    pool = Pool(processes=processes)
+    func = partial(run_dssp, dssp_executable = dssp_executable, forbidden_codes = forbidden_codes,
+                   plddt_thres = plddt_thres)
+
     with trange(structure_count, desc = f"Running DSSP for structures in tar archive...") as pbar:
-        for i, (cif_file, model, base_name, plddt_vals) in enumerate(stream_structures(tar_paths)):
-            dssp = DSSP(model, cif_file, dssp=dssp_executable)
-            dssp_vals = list(dssp.property_dict.values())
-            dssp_codes = [val[2] for val in dssp_vals]
-            forbidden_dssp_mask = np.isin(dssp_codes, forbidden_codes)
-
-            # Only consider forbidden secondary structures if model confidence passes a given threshold
-            plddt_mask = np.greater_equal(plddt_vals, plddt_thres)
-            high_confidence_forbidden = np.logical_and(plddt_mask, forbidden_dssp_mask)
-            excluded_results[base_name] = high_confidence_forbidden
-
-            dssp_results[base_name] = (dssp, plddt_vals)
-            os.unlink(cif_file)  # Remove the temporary file after use
-
+        for i, output in enumerate(pool.imap_unordered(func, stream_structures(tar_paths))):
+            base_name, results = output
+            excluded_results[base_name] = results
             pbar.update()
 
-    return dssp_results, excluded_results
+    return excluded_results
+
+def main(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
+    alphadssp_path = os.path.join(os.getcwd(), "alphadssp_excluded_results.pkl")
+    if os.path.exists(alphadssp_path):
+        with open(alphadssp_path, "rb") as file:
+            excluded_results = pickle.load(file)
+    else:
+        if tar_dir is None:
+            tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
+        tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
+        excluded_results = run_dssp_parallel(tar_paths, dssp_executable, forbidden_codes, plddt_thres)
+        with open("alphadssp_excluded_results.pkl", "wb") as file:
+            pickle.dump(excluded_results, file)
+
+    return excluded_results
 
 if __name__ == "__main__":
-    tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
-    tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
-    dssp_results, excluded_results = run_dssp(tar_paths)
-    with open("alphadssp_excluded_results.pkl", "wb") as file:
-        pickle.dump((dssp_results, excluded_results), file)
+    main()
