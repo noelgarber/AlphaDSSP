@@ -106,8 +106,8 @@ def run_dssp_parallel(tar_paths, dssp_executable="/usr/bin/dssp", forbidden_code
 
     return excluded_results
 
-def main(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
-    alphadssp_path = os.path.join(os.getcwd(), "alphadssp_excluded_results.pkl")
+def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
+    alphadssp_path = os.path.join(os.getcwd(), "../alphadssp_excluded_results.pkl")
     if os.path.exists(alphadssp_path):
         with open(alphadssp_path, "rb") as file:
             excluded_results = pickle.load(file)
@@ -116,10 +116,10 @@ def main(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H"
             tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
         tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
         excluded_results = run_dssp_parallel(tar_paths, dssp_executable, forbidden_codes, plddt_thres)
-        with open("alphadssp_excluded_results.pkl", "wb") as file:
+        with open("../alphadssp_excluded_results.pkl", "wb") as file:
             pickle.dump(excluded_results, file)
 
     return excluded_results
 
 if __name__ == "__main__":
-    main()
+    generate_dssp()

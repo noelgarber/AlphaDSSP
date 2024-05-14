@@ -1,0 +1,10 @@
+LICENSE
+README.md
+setup.py
+AlphaDSSP.egg-info/PKG-INFO
+AlphaDSSP.egg-info/SOURCES.txt
+AlphaDSSP.egg-info/dependency_links.txt
+AlphaDSSP.egg-info/requires.txt
+AlphaDSSP.egg-info/top_level.txt
+alphadssp/__init__.py
+alphadssp/alphadssp.py

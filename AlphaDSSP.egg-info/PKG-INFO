@@ -1,0 +1,14 @@
+Metadata-Version: 2.1
+Name: AlphaDSSP
+Version: 0.2
+Summary: Tool for converting Alphafold tar shards to a database of DSSP secondary structure information.
+Home-page: https://github.com/noelgarber/AlphaDSSP
+Author: Noel Garber
+Author-email: ngarber93@gmail.com
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
+# AlphaDSSP
+ DSSP Analysis for Alphafold Secondary Structure Parsing
