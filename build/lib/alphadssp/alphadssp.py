@@ -236,7 +236,8 @@ def parse_fragments(excluded_results, verbose = True):
 
     return accession_results
 
-def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
+def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"),
+                  plddt_thres=70, use_cached=True):
     '''
     Main function to generate DSSP results and an exclusion mask based on confident forbidden codes
 
@@ -245,6 +246,7 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
         dssp_executable (str):        path to locally installed DSSP executable
         forbidden_codes (list|tuple): disallowed DSSP codes that will be used for generating the exclusion mask
         plddt_thres (int):            threshold for pLDDT such that only confident disallowed DSSP codes are used
+        use_cached (bool):            whether to use cached (pickled) AlphaDSSP data; if no, it is rebuilt
 
     Returns:
         results (dict): dictionary of full entry name --> tuple of (high_confidence_forbidden, dssp_codes_str)
@@ -252,11 +254,9 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
 
     # Reload from previous build if desired
     if os.path.exists(alphadssp_path):
-        use_again = input(f"Previously built results exist (alphadssp_excluded_results.pkl); use them again? (Y/N)  ")
-        if use_again == "Y":
-            with open(alphadssp_path, "rb") as file:
-                results = pickle.load(file)
-                return results
+        with open(alphadssp_path, "rb") as file:
+            results = pickle.load(file)
+            return results
 
     if tar_dir is None:
         tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")

@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: AlphaDSSP
-Version: 0.4
+Version: 0.4.1
 Summary: Tool for converting Alphafold tar shards to a database of DSSP secondary structure information.
 Home-page: https://github.com/noelgarber/AlphaDSSP
 Author: Noel Garber
