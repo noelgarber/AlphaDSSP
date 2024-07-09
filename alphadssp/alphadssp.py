@@ -10,6 +10,11 @@ from functools import partial
 from tqdm import trange
 from Bio.PDB import MMCIFParser, DSSP
 
+'''
+Tar shards from Alphafold can be obtained by organism TaxID using the following command: 
+`gsutil -m cp gs://public-datasets-deepmind-alphafold-v4/proteomes/proteome-tax_id-[TAX ID]-*_v4.tar .`
+'''
+
 def get_structure_count(tar_paths, extension = ".cif.gz"):
     count = 0
     if isinstance(tar_paths, str):
@@ -242,7 +247,8 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
     Main function to generate DSSP results and an exclusion mask based on confident forbidden codes
 
     Args:
-        tar_dir (str|None):           AlphaFold tar shards directory
+        tar_dir (str|None):           AlphaFold tar shards directory; this can be obtained by running this command:
+                                      `gsutil -m cp gs://public-datasets-deepmind-alphafold-v4/proteomes/proteome-tax_id-[TAX ID]-*_v4.tar .`
         dssp_executable (str):        path to locally installed DSSP executable
         forbidden_codes (list|tuple): disallowed DSSP codes that will be used for generating the exclusion mask
         plddt_thres (int):            threshold for pLDDT such that only confident disallowed DSSP codes are used
@@ -253,6 +259,9 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
     '''
 
     # Reload from previous build if desired
+    tar_folder_name = tar_dir.rsplit("/", 1)[1]
+    pickled_name = f"alphadssp_excluded_results_{tar_folder_name}.pkl"
+    alphadssp_path = os.path.join(directory_path, pickled_name)
     if os.path.exists(alphadssp_path):
         with open(alphadssp_path, "rb") as file:
             results = pickle.load(file)
