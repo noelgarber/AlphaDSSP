@@ -5,6 +5,9 @@ import tempfile
 import json
 import pickle
 import os
+import time
+import shutil
+from io import StringIO
 from multiprocessing import Pool
 from functools import partial
 from tqdm import trange
@@ -28,7 +31,7 @@ def get_structure_count(tar_paths, extension = ".cif.gz"):
 
     return count
 
-def stream_structures(tar_paths):
+def stream_structures(tar_paths, chunk_size = 100):
     # Prompt user for paths if none are passed
     if tar_paths is None:
         tar_paths = []
@@ -44,40 +47,56 @@ def stream_structures(tar_paths):
                 break
 
     # Stream the structures as pairs of mmCIF and JSON files
+    chunk = []
+    parser = MMCIFParser(QUIET=True)  # Reuse parser to avoid repeated instantiation
+
     for tar_path in tar_paths:
-        with tarfile.open(tar_path, "r") as tar:
-            for member in tar.getmembers():
-                if member.isfile() and member.name.endswith(".cif.gz"):
-                    # Extract the mmCIF file
-                    fileobj = tar.extractfile(member)
-                    if fileobj:
-                        with gzip.open(fileobj, "rt", encoding="utf-8") as gz_text:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Extract tar to a temporary directory
+            with tarfile.open(tar_path, "r") as tar:
+                tar.extractall(path=temp_dir)
+
+            for root, _, files in os.walk(temp_dir):
+                for file in files:
+                    if file.endswith(".cif.gz"):
+                        cif_path = os.path.join(root, file)
+
+                        # Extract the mmCIF file
+                        with gzip.open(cif_path, "rt", encoding="utf-8") as gz_text:
                             string_data = gz_text.read()
 
-                        # Create a temporary file and write the pdb data to it
-                        temp_cif_file = tempfile.NamedTemporaryFile(delete=False, suffix=".cif")
-                        with open(temp_cif_file.name, "w") as temp_file:
+                        # Parse the file into a structure directly from string data
+                        base_name = os.path.basename(file).split(".cif.gz")[0]
+                        structure = parser.get_structure(base_name, StringIO(string_data))
+                        model = structure[0]
+
+                        # Write to a temporary file for DSSP processing
+                        temp_cif_file = os.path.join(temp_dir, f"{base_name}.cif")
+                        with open(temp_cif_file, "w") as temp_file:
                             temp_file.write(string_data)
 
-                    # Parse the file into a structure
-                    parser = MMCIFParser()
-                    base_name = os.path.basename(member.name).split(".cif.gz")[0]
-                    structure = parser.get_structure(base_name, temp_cif_file.name)
-                    model = structure[0]
+                        # Extract the accompanying JSON file
+                        confidence_json_name = file.replace(".cif.gz", ".json.gz").replace("model", "confidence")
+                        confidence_json_path = os.path.join(root, confidence_json_name)
+                        if os.path.exists(confidence_json_path):
+                            with gzip.open(confidence_json_path, "rt") as gzip_file:
+                                confidence_dict = json.load(gzip_file)
+                                confidence_vals = np.array(confidence_dict["confidenceScore"])
 
-                    # Extract the accompanying JSON file
-                    confidence_json_name = base_name + ".json.gz"
-                    confidence_json_name = confidence_json_name.replace("model", "confidence")
-                    confidence_json_file = tar.extractfile(confidence_json_name)
-                    with gzip.open(confidence_json_file, "rt") as gzip_file:
-                        confidence_dict = json.load(gzip_file)
-                        confidence_vals = confidence_dict["confidenceScore"]
-                        confidence_vals = np.array(confidence_vals)
+                            chunk.append((temp_cif_file, model, base_name, confidence_vals))
 
-                    yield (temp_cif_file.name, model, base_name, confidence_vals)
+                            if len(chunk) == chunk_size:
+                                completed_chunk = chunk.copy()
+                                chunk = []  # reset for next cycle
+                                yield completed_chunk
+
+    # Yield the last chunk if it's not empty
+    if chunk:
+        yield chunk
 
 def run_dssp(entry_tuple, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
-    # Function for single entry
+    # Function for single entry; near maximum efficiency because DSSP() takes >99% of the elapsed time
+
     cif_file, model, base_name, plddt_vals = entry_tuple
     dssp = DSSP(model, cif_file, dssp=dssp_executable)
     dssp_codes = [val[2] for val in list(dssp.property_dict.values())]
@@ -91,22 +110,32 @@ def run_dssp(entry_tuple, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H
 
     return (base_name, results)
 
+def run_dssp_chunk(chunk, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
+    # Function for iterating through a chunk
+
+    excluded_results_chunk = {}
+    for entry_tuple in chunk:
+        base_name, results = run_dssp(entry_tuple, dssp_executable, forbidden_codes, plddt_thres)
+        excluded_results_chunk[base_name] = results
+
+    return excluded_results_chunk
+
 def run_dssp_parallel(tar_paths, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"),
-                      plddt_thres=70):
+                      plddt_thres=70, chunk_size = 100):
 
     print(f"Getting structure count...")
     structure_count = get_structure_count(tar_paths)
+    chunk_count = int(np.ceil(structure_count / chunk_size))
     excluded_results = {}
 
     processes = os.cpu_count() - 1
     pool = Pool(processes=processes)
-    func = partial(run_dssp, dssp_executable = dssp_executable, forbidden_codes = forbidden_codes,
+    func = partial(run_dssp_chunk, dssp_executable = dssp_executable, forbidden_codes = forbidden_codes,
                    plddt_thres = plddt_thres)
 
-    with trange(structure_count, desc = f"Running DSSP for structures in tar archive...") as pbar:
-        for i, output in enumerate(pool.imap_unordered(func, stream_structures(tar_paths))):
-            base_name, results = output
-            excluded_results[base_name] = results
+    with trange(chunk_count, desc = f"Running DSSP for chunks of structures in tar archive...") as pbar:
+        for i, excluded_results_chunk in enumerate(pool.imap_unordered(func, stream_structures(tar_paths, chunk_size))):
+            excluded_results = excluded_results | excluded_results_chunk
             pbar.update()
 
     return excluded_results
@@ -258,6 +287,9 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
         results (dict): dictionary of full entry name --> tuple of (high_confidence_forbidden, dssp_codes_str)
     '''
 
+    if tar_dir is None:
+        tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
+
     # Reload from previous build if desired
     tar_folder_name = tar_dir.rsplit("/", 1)[1]
     pickled_name = f"alphadssp_excluded_results_{tar_folder_name}.pkl"
@@ -267,8 +299,6 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
             results = pickle.load(file)
             return results
 
-    if tar_dir is None:
-        tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
     tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
     results = run_dssp_parallel(tar_paths, dssp_executable, forbidden_codes, plddt_thres)
     results = parse_fragments(results)
