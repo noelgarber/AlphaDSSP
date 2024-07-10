@@ -274,6 +274,22 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
         with open(alphadssp_path, "rb") as file:
             results = pickle.load(file)
             return results
+    else:
+        directory_contents = os.listdir(directory_path)
+        part_paths = []
+        for filename in directory_contents:
+            if filename.split("_part")[0] == pickled_name[:-4]:
+                part_paths.append(os.path.join(directory_path, filename))
+        if len(part_paths) > 0:
+            results = {}
+            for part_path in part_paths:
+                with open(part_path, "rb") as file:
+                    part_results = pickle.load(file)
+                    results = results | part_results
+                os.remove(part_path)
+            with open(alphadssp_path, "wb") as file:
+                pickle.dump(results, file)
+            return results
 
     tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
     results = run_dssp_parallel(tar_paths, dssp_executable, forbidden_codes, plddt_thres)
