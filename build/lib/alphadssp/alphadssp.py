@@ -5,6 +5,7 @@ import tempfile
 import json
 import pickle
 import os
+import warnings
 from multiprocessing import Pool
 from functools import partial
 from tqdm import trange
@@ -79,7 +80,11 @@ def stream_structures(tar_paths):
 def run_dssp(entry_tuple, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70):
     # Function for single entry
     cif_file, model, base_name, plddt_vals = entry_tuple
-    dssp = DSSP(model, cif_file, dssp=dssp_executable)
+    try:
+        dssp = DSSP(model, cif_file, dssp=dssp_executable)
+    except Exception as e:
+        warnings.warn(f"DSSP encountered an error for {base_name}; it will be skipped. The error was: {e}")
+        return (base_name, (np.array([]), ""))
     dssp_codes = [val[2] for val in list(dssp.property_dict.values())]
     forbidden_dssp_mask = np.isin(dssp_codes, forbidden_codes)
 
@@ -258,6 +263,9 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
         results (dict): dictionary of full entry name --> tuple of (high_confidence_forbidden, dssp_codes_str)
     '''
 
+    if tar_dir is None:
+        tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
+
     # Reload from previous build if desired
     tar_folder_name = tar_dir.rsplit("/", 1)[1]
     pickled_name = f"alphadssp_excluded_results_{tar_folder_name}.pkl"
@@ -267,12 +275,10 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
             results = pickle.load(file)
             return results
 
-    if tar_dir is None:
-        tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
     tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
     results = run_dssp_parallel(tar_paths, dssp_executable, forbidden_codes, plddt_thres)
     results = parse_fragments(results)
-    with open("../alphadssp_excluded_results.pkl", "wb") as file:
+    with open(pickled_name, "wb") as file:
         pickle.dump(results, file)
 
     return results
