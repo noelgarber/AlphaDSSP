@@ -2,19 +2,42 @@ import numpy as np
 import tarfile
 import gzip
 import tempfile
+import subprocess
 import json
 import pickle
 import os
 import warnings
+import shutil
 from multiprocessing import Pool
 from functools import partial
 from tqdm import trange
 from Bio.PDB import MMCIFParser, DSSP
 
+current_file_path = __file__
+directory_path = os.path.dirname(os.path.abspath(current_file_path))
+
 '''
 Tar shards from Alphafold can be obtained by organism TaxID using the following command: 
 `gsutil -m cp gs://public-datasets-deepmind-alphafold-v4/proteomes/proteome-tax_id-[TAX ID]-*_v4.tar .`
 '''
+
+def request_alphafold_shards(taxid):
+    # Requests tar shards of Alphafold data by organism taxonomic identifier (TaxID)
+
+    temp_dir = os.path.join(directory_path, str(taxid))
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    gsutil_command = ["gsutil", "-m", "cp",
+                      f"gs://public-datasets-deepmind-alphafold-v4/proteomes/proteome-tax_id-{taxid}-*_v4.tar",
+                      temp_dir]
+    result = subprocess.run(gsutil_command, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Error: {result.stderr}")
+        return None
+    else:
+        return temp_dir
 
 def get_structure_count(tar_paths, extension = ".cif.gz"):
     count = 0
@@ -115,10 +138,6 @@ def run_dssp_parallel(tar_paths, dssp_executable="/usr/bin/dssp", forbidden_code
             pbar.update()
 
     return excluded_results
-
-current_file_path = __file__
-directory_path = os.path.dirname(os.path.abspath(current_file_path))
-alphadssp_path = os.path.join(directory_path, "alphadssp_excluded_results.pkl")
 
 def fuse_accession(args, stride = 200, trim_factor = 0.5):
     accession, entries = args
@@ -246,14 +265,15 @@ def parse_fragments(excluded_results, verbose = True):
 
     return accession_results
 
-def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_codes = ("H","B","E","G","I","T"),
-                  plddt_thres=70, use_cached=True):
+def generate_dssp(tar_dir = None, taxid = None, dssp_executable="/usr/bin/dssp",
+                  forbidden_codes = ("H","B","E","G","I","T"), plddt_thres=70, use_cached=True):
     '''
     Main function to generate DSSP results and an exclusion mask based on confident forbidden codes
 
     Args:
         tar_dir (str|None):           AlphaFold tar shards directory; this can be obtained by running this command:
                                       `gsutil -m cp gs://public-datasets-deepmind-alphafold-v4/proteomes/proteome-tax_id-[TAX ID]-*_v4.tar .`
+        taxid (int|str):              taxonomic identifier for target species; requests using gsutil if not pre-compiled
         dssp_executable (str):        path to locally installed DSSP executable
         forbidden_codes (list|tuple): disallowed DSSP codes that will be used for generating the exclusion mask
         plddt_thres (int):            threshold for pLDDT such that only confident disallowed DSSP codes are used
@@ -263,25 +283,65 @@ def generate_dssp(tar_dir = None, dssp_executable="/usr/bin/dssp", forbidden_cod
         results (dict): dictionary of full entry name --> tuple of (high_confidence_forbidden, dssp_codes_str)
     '''
 
-    if tar_dir is None:
-        tar_dir = input("Enter the path to the folder containing tar shards of Alphafold structures:  ")
+    # Handle inputs and get expected pickled_name to reload from previous build (or save if not present)
+    cleanup_tar_dir = False
+    if tar_dir is None and taxid is None:
+        raise ValueError(f"tar_dir or taxid must be given, but both were set to None")
+    elif isinstance(tar_dir, str):
+        tar_folder_name = tar_dir.rsplit("/", 1)[1]
+        pickled_name = f"alphadssp_excluded_results_{tar_folder_name}.pkl"
+    elif isinstance(taxid, str) or isinstance(taxid, int):
+        pickled_name = f"alphadssp_excluded_results_{taxid}.pkl"
+        if not os.path.exists(os.path.join(directory_path, pickled_name)):
+            print(f"\tRequesting data from Alphafold for TaxID {taxid}...")
+            tar_dir = request_alphafold_shards(taxid)
+            cleanup_tar_dir = True
+    elif tar_dir is not None:
+        raise ValueError(f"tar_dir was given as {tar_dir} (type: {type(tar_dir)}), but must be a path string")
+    else:
+        raise ValueError(f"taxid was given as {taxid} (type: {type(taxid)}), but must be either int or string")
 
-    # Reload from previous build if desired
-    tar_folder_name = tar_dir.rsplit("/", 1)[1]
-    pickled_name = f"alphadssp_excluded_results_{tar_folder_name}.pkl"
-    alphadssp_path = os.path.join(directory_path, pickled_name)
-    if os.path.exists(alphadssp_path):
-        with open(alphadssp_path, "rb") as file:
-            results = pickle.load(file)
-            return results
+    # Reload from previous build if it exists, if desired
+    if use_cached:
+        alphadssp_path = os.path.join(directory_path, pickled_name)
+        if os.path.exists(alphadssp_path):
+            with open(alphadssp_path, "rb") as file:
+                results = pickle.load(file)
+                return results
+        else:
+            directory_contents = os.listdir(directory_path)
+            part_paths = []
+            for filename in directory_contents:
+                if filename.split("_part")[0] == pickled_name[:-4]:
+                    part_paths.append(os.path.join(directory_path, filename))
+            if len(part_paths) > 0:
+                results = {}
+                for part_path in part_paths:
+                    with open(part_path, "rb") as file:
+                        part_results = pickle.load(file)
+                        results = results | part_results
+                    os.remove(part_path)
+                with open(alphadssp_path, "wb") as file:
+                    pickle.dump(results, file)
+                return results
 
+    # Build results if not previously existing
     tar_paths = [os.path.join(tar_dir, filename) for filename in os.listdir(tar_dir)]
     results = run_dssp_parallel(tar_paths, dssp_executable, forbidden_codes, plddt_thres)
     results = parse_fragments(results)
     with open(pickled_name, "wb") as file:
         pickle.dump(results, file)
 
+    # Clean up temp dir if it exists
+    if cleanup_tar_dir:
+        print(f"Removing temp files in {tar_dir}")
+        shutil.rmtree(tar_dir)
+
     return results
 
 if __name__ == "__main__":
-    generate_dssp()
+    taxid = input(f"Enter the taxid for the target species, or leave blank to be prompted for a folder:  ")
+    tar_dir = input(f"Enter the path to the Alphafold tar shards: ") if taxid == "" else None
+    if taxid == "":
+        taxid = None
+    generate_dssp(tar_dir, taxid)

@@ -1,4 +1,5 @@
 LICENSE
+MANIFEST.in
 README.md
 setup.py
 AlphaDSSP.egg-info/PKG-INFO
@@ -8,3 +9,15 @@ AlphaDSSP.egg-info/requires.txt
 AlphaDSSP.egg-info/top_level.txt
 alphadssp/__init__.py
 alphadssp/alphadssp.py
+alphadssp/alphadssp_excluded_results_10090.pkl
+alphadssp/alphadssp_excluded_results_10116.pkl
+alphadssp/alphadssp_excluded_results_3702_part_1.pkl
+alphadssp/alphadssp_excluded_results_3702_part_2.pkl
+alphadssp/alphadssp_excluded_results_4896.pkl
+alphadssp/alphadssp_excluded_results_4932.pkl
+alphadssp/alphadssp_excluded_results_6239.pkl
+alphadssp/alphadssp_excluded_results_7227.pkl
+alphadssp/alphadssp_excluded_results_7955.pkl
+alphadssp/alphadssp_excluded_results_9606_part_1.pkl
+alphadssp/alphadssp_excluded_results_9606_part_2.pkl
+alphadssp/__pycache__/__init__.cpython-311.pyc
